@@ -720,7 +720,7 @@ function connectMQTT(cfg){
   }
   setBadgeConnecting();
   var clientId='tasni-dash-'+Math.random().toString(36).substr(2,8);
-  mqttClient=new Paho.Client(cfg.broker,443,'/mqtt',clientId);
+  mqttClient=new Paho.Client(cfg.broker,8884,'/mqtt',clientId);
 
   mqttClient.onConnectionLost=function(r){
     console.log('MQTT lost:',r.errorMessage);
