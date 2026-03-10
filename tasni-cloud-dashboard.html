@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#050508">
+<meta name="description" content="TASNI Cloud Dashboard — Live plant moisture monitoring">
+<title>TASNI Cloud</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<!-- MQTT over WebSocket — Paho JS client (CDN, no install) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+<style>
+/* ── TOKENS ─────────────────────────────────────────────────── */
+:root{
+  --ink:#050508;
+  --s1:#0C0C12;
+  --s2:#13131C;
+  --s3:#1A1A26;
+  --rim:rgba(255,255,255,.07);
+  --rim2:rgba(255,255,255,.12);
+  --fg1:#FAFAFA;
+  --fg2:rgba(255,255,255,.55);
+  --fg3:rgba(255,255,255,.28);
+  --fg4:rgba(255,255,255,.1);
+  --acc:#2DD4BF;
+  --r1:20px;
+  --font:'Geist',system-ui,sans-serif;
+  --mono:'DM Mono',monospace;
+  --serif:'DM Serif Display',serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{background:var(--ink);height:100%}
+body{font-family:var(--font);background:var(--ink);color:var(--fg1);
+  min-height:100dvh;overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale}
+.root{display:flex;flex-direction:column;min-height:100dvh}
+
+/* ── HEADER ─────────────────────────────────────────────────── */
+.hdr{
+  position:sticky;top:0;z-index:50;
+  padding:0 20px;
+  padding-top:max(env(safe-area-inset-top),14px);
+  background:rgba(5,5,8,.85);
+  backdrop-filter:blur(32px) saturate(180%);
+  -webkit-backdrop-filter:blur(32px) saturate(180%);
+  border-bottom:1px solid var(--rim)}
+.hdr-inner{height:52px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:34px;height:34px;border-radius:10px;
+  background:linear-gradient(135deg,var(--acc),#10B981);
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+  box-shadow:0 0 18px rgba(45,212,191,.3);
+  transition:box-shadow .6s,background .6s}
+.brand-name{font-size:16px;font-weight:800;letter-spacing:-.3px}
+.brand-sub{font-family:var(--mono);font-size:8.5px;color:var(--fg3);
+  letter-spacing:1.4px;text-transform:uppercase;margin-top:1px}
+
+/* Connection status badge */
+.conn-badge{display:flex;align-items:center;gap:5px;
+  padding:5px 11px;border-radius:100px;
+  font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.3px;
+  border:1px solid;transition:all .4s}
+.badge-connecting{background:rgba(251,191,36,.07);color:#FBBF24;border-color:rgba(251,191,36,.18)}
+.badge-live{background:rgba(45,212,191,.07);color:#2DD4BF;border-color:rgba(45,212,191,.18)}
+.badge-stale{background:rgba(248,113,113,.07);color:#F87171;border-color:rgba(248,113,113,.18)}
+.badge-offline{background:rgba(100,116,139,.07);color:#64748B;border-color:rgba(100,116,139,.15)}
+@keyframes breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
+.bdot{width:5px;height:5px;border-radius:50%;animation:breathe 2.4s ease-in-out infinite;flex-shrink:0}
+
+/* ── SCROLL ─────────────────────────────────────────────────── */
+.scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:20px 16px 40px;
+  padding-left:max(16px,env(safe-area-inset-left));
+  padding-right:max(16px,env(safe-area-inset-right));
+  max-width:520px;margin:0 auto;width:100%}
+
+/* ── SETUP OVERLAY ──────────────────────────────────────────── */
+.setup-overlay{
+  position:fixed;inset:0;z-index:200;
+  background:rgba(5,5,8,.97);
+  display:flex;align-items:center;justify-content:center;
+  padding:24px}
+.setup-box{
+  width:100%;max-width:420px;
+  background:var(--s1);border:1px solid var(--rim2);
+  border-radius:24px;padding:28px 24px}
+.setup-logo{font-size:40px;margin-bottom:12px;text-align:center}
+.setup-title{font-size:22px;font-weight:800;letter-spacing:-.5px;
+  text-align:center;margin-bottom:6px}
+.setup-sub{font-family:var(--mono);font-size:11px;color:var(--fg3);
+  text-align:center;line-height:1.6;margin-bottom:24px;letter-spacing:.2px}
+.setup-fields{display:flex;flex-direction:column;gap:14px}
+.field-label{font-family:var(--mono);font-size:9px;color:var(--fg3);
+  letter-spacing:1.1px;text-transform:uppercase;margin-bottom:5px}
+.field-input{
+  width:100%;background:var(--s3);border:1px solid var(--rim2);
+  border-radius:11px;padding:12px 14px;
+  font-family:var(--mono);font-size:13px;color:var(--fg1);
+  outline:none;transition:border-color .2s}
+.field-input:focus{border-color:var(--acc)}
+.field-input::placeholder{color:var(--fg4)}
+.connect-btn{
+  width:100%;margin-top:20px;padding:14px;
+  background:var(--acc);border:none;border-radius:12px;
+  font-family:var(--font);font-size:15px;font-weight:700;
+  color:#000;cursor:pointer;
+  transition:opacity .15s,transform .15s}
+.connect-btn:active{opacity:.8;transform:scale(.98)}
+.setup-note{font-family:var(--mono);font-size:9.5px;color:var(--fg4);
+  text-align:center;margin-top:14px;line-height:1.6}
+.setup-note a{color:var(--acc);text-decoration:none}
+
+/* ── HERO CARD ──────────────────────────────────────────────── */
+.hero{
+  position:relative;border-radius:26px;overflow:hidden;
+  background:var(--s1);border:1px solid var(--rim);
+  margin-bottom:12px}
+.hero-glow{
+  position:absolute;pointer-events:none;
+  top:-60px;left:-40px;width:280px;height:280px;
+  border-radius:50%;opacity:.07;
+  background:radial-gradient(circle,var(--acc),transparent 70%);
+  transition:background .8s ease;
+  animation:drift 8s ease-in-out infinite alternate}
+@keyframes drift{0%{transform:translate(0,0) scale(1)}100%{transform:translate(20px,12px) scale(1.08)}}
+.hero-body{position:relative;z-index:1;padding:22px 20px 18px}
+.tier-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 12px;border-radius:100px;
+  font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.6px;
+  border:1px solid;align-self:flex-start;transition:all .7s ease;margin-bottom:14px}
+.tier-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+
+/* Gauge + sidebar */
+.gauge-section{display:flex;align-items:center;gap:6px}
+.gauge-wrap{position:relative;width:148px;height:148px;flex-shrink:0}
+.gauge-svg{width:148px;height:148px;transform:rotate(-90deg)}
+.g-track{fill:none;stroke:rgba(255,255,255,.05);stroke-width:10;stroke-linecap:round}
+.g-glow{fill:none;stroke-width:14;stroke-linecap:round;stroke-dasharray:389.56;
+  opacity:.18;filter:blur(4px);
+  transition:stroke-dashoffset 1.3s cubic-bezier(.34,1.4,.64,1),stroke .7s ease}
+.g-arc{fill:none;stroke-width:10;stroke-linecap:round;stroke-dasharray:389.56;
+  transition:stroke-dashoffset 1.3s cubic-bezier(.34,1.4,.64,1),stroke .7s ease}
+.gauge-center{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center}
+.g-val{font-family:var(--serif);font-size:48px;line-height:1;letter-spacing:-1px;
+  transition:color .7s ease}
+.g-unit{font-family:var(--mono);font-size:12px;color:var(--fg3);letter-spacing:1px;margin-top:2px}
+
+.hero-info{flex:1;padding-left:16px;display:flex;flex-direction:column;gap:11px;min-width:0}
+.hero-label{font-size:22px;font-weight:800;letter-spacing:-.5px;line-height:1.2;color:var(--fg1)}
+.hero-desc{font-size:12px;color:var(--fg2);line-height:1.6}
+.m-track{height:3px;border-radius:3px;background:var(--fg4);overflow:hidden}
+.m-fill{height:3px;border-radius:3px;
+  transition:width 1.3s cubic-bezier(.34,1.4,.64,1),background .7s}
+.m-labels{display:flex;justify-content:space-between;
+  font-family:var(--mono);font-size:8px;color:var(--fg4);margin-top:4px;letter-spacing:.3px}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{display:flex;align-items:center;gap:4px;
+  padding:3px 9px;border-radius:8px;
+  background:var(--s3);border:1px solid var(--rim);
+  font-family:var(--mono);font-size:9.5px;color:var(--fg3)}
+.chip-v{color:var(--fg1);font-weight:500}
+.hero-foot{
+  border-top:1px solid var(--rim);padding:11px 20px;
+  display:flex;justify-content:space-between;align-items:center;
+  position:relative;z-index:1}
+.hft{font-family:var(--mono);font-size:9px;color:var(--fg4);letter-spacing:.3px}
+
+/* ── METRICS ────────────────────────────────────────────────── */
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.metric{
+  background:var(--s1);border:1px solid var(--rim);
+  border-radius:var(--r1);padding:16px 14px;position:relative;overflow:hidden}
+.metric::after{content:'';position:absolute;top:0;left:16px;right:16px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--ma,rgba(255,255,255,.08)),transparent)}
+.metric-label{font-family:var(--mono);font-size:8.5px;color:var(--fg4);
+  letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
+.metric-val{font-family:var(--serif);font-size:30px;line-height:1;color:var(--fg1);letter-spacing:-.5px}
+.metric-unit{font-family:var(--mono);font-size:11px;color:var(--fg3)}
+.metric-sub{font-family:var(--mono);font-size:10px;color:var(--fg3);margin-top:5px}
+.metric-bar{height:2px;border-radius:2px;background:var(--fg4);margin-top:10px;overflow:hidden}
+.metric-barf{height:2px;border-radius:2px;transition:width .9s ease,background .6s}
+
+/* ── HISTORY CHART ──────────────────────────────────────────── */
+.chart-card{
+  background:var(--s1);border:1px solid var(--rim);
+  border-radius:var(--r1);padding:18px 16px 14px;margin-bottom:12px}
+.cc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+.cc-head{font-size:13px;font-weight:700;color:var(--fg1);letter-spacing:-.2px}
+.cc-meta{font-family:var(--mono);font-size:9px;color:var(--fg3);margin-top:3px;letter-spacing:.3px}
+.cc-range{font-family:var(--mono);font-size:10px;padding:3px 10px;border-radius:100px;
+  background:var(--s3);border:1px solid var(--rim);color:var(--fg2)}
+.chart-svg{width:100%;height:68px;overflow:visible;display:block}
+.cc-footer{display:flex;justify-content:space-between;margin-top:7px}
+.cc-ft{font-family:var(--mono);font-size:8.5px;color:var(--fg4);letter-spacing:.2px}
+
+/* ── DEVICE INFO CARD ───────────────────────────────────────── */
+.info-card{
+  background:var(--s1);border:1px solid var(--rim);
+  border-radius:var(--r1);padding:16px;margin-bottom:12px}
+.info-head{font-family:var(--mono);font-size:9px;color:var(--fg4);
+  letter-spacing:1.2px;text-transform:uppercase;margin-bottom:12px}
+.info-row{display:flex;justify-content:space-between;align-items:center;
+  padding:6px 0;border-bottom:1px solid var(--rim)}
+.info-row:last-child{border-bottom:none}
+.info-k{font-size:12px;color:var(--fg3)}
+.info-v{font-family:var(--mono);font-size:11.5px;color:var(--fg1);font-weight:500;
+  font-variant-numeric:tabular-nums}
+
+/* ── CONNECT CARD ───────────────────────────────────────────── */
+.connect-card{
+  background:var(--s1);border:1px solid var(--rim2);
+  border-radius:var(--r1);padding:20px;margin-bottom:12px;
+  text-align:center}
+.connect-card-ico{font-size:32px;margin-bottom:10px}
+.connect-card-t{font-size:16px;font-weight:700;margin-bottom:6px}
+.connect-card-s{font-family:var(--mono);font-size:11px;color:var(--fg3);line-height:1.6;margin-bottom:16px}
+.reconfigure-btn{
+  padding:10px 20px;background:var(--s3);border:1px solid var(--rim2);
+  border-radius:10px;font-family:var(--mono);font-size:11px;
+  color:var(--fg2);cursor:pointer;transition:.15s}
+.reconfigure-btn:active{opacity:.7}
+
+/* ── STALE WARNING BANNER ───────────────────────────────────── */
+.stale-banner{
+  background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.18);
+  border-radius:12px;padding:10px 14px;margin-bottom:12px;
+  font-family:var(--mono);font-size:10px;color:#FBBF24;
+  display:flex;align-items:center;gap:8px;letter-spacing:.2px;
+  display:none}
+
+/* ── FOOTER ─────────────────────────────────────────────────── */
+.footer{
+  text-align:center;padding:16px;
+  font-family:var(--mono);font-size:9px;color:var(--fg4);
+  letter-spacing:.4px;line-height:1.8}
+.footer a{color:var(--acc);text-decoration:none}
+
+/* ── TOAST ──────────────────────────────────────────────────── */
+.toast{
+  position:fixed;bottom:24px;left:50%;
+  transform:translateX(-50%) translateY(6px);
+  background:#16161F;border:1px solid var(--rim2);
+  padding:10px 22px;border-radius:100px;
+  font-family:var(--mono);font-size:12px;font-weight:500;color:var(--fg1);
+  opacity:0;transition:.22s ease;z-index:999;
+  pointer-events:none;white-space:nowrap;
+  box-shadow:0 12px 40px rgba(0,0,0,.7)}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.ok{color:#34D399;border-color:rgba(52,211,153,.22)}
+.toast.err{color:#F87171;border-color:rgba(248,113,113,.22)}
+</style>
+</head>
+<body>
+<div class="root">
+
+<!-- ═══ HEADER ═════════════════════════════════════════════════ -->
+<header class="hdr">
+  <div class="hdr-inner">
+    <div class="brand">
+      <div class="logo" id="logo">🌿</div>
+      <div>
+        <div class="brand-name">TASNI</div>
+        <div class="brand-sub">Cloud Dashboard</div>
+      </div>
+    </div>
+    <div class="conn-badge badge-connecting" id="connBadge">
+      <div class="bdot" id="connDot" style="background:#FBBF24"></div>
+      <span id="connTxt">Connecting...</span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ SETUP OVERLAY ══════════════════════════════════════════ -->
+<div class="setup-overlay" id="setupOverlay">
+  <div class="setup-box">
+    <div class="setup-logo">🌿</div>
+    <div class="setup-title">Welcome to TASNI</div>
+    <div class="setup-sub">
+      Enter your HiveMQ broker details to connect<br>
+      to your plant sensor from anywhere in the world.
+    </div>
+    <div class="setup-fields">
+      <div>
+        <div class="field-label">HiveMQ Broker Host</div>
+        <input class="field-input" id="inBroker" type="text"
+          placeholder="xxxxxxxx.s1.eu.hivemq.cloud" autocomplete="off" autocapitalize="none">
+      </div>
+      <div>
+        <div class="field-label">Username</div>
+        <input class="field-input" id="inUser" type="text"
+          placeholder="your-hivemq-username" autocomplete="off" autocapitalize="none">
+      </div>
+      <div>
+        <div class="field-label">Password</div>
+        <input class="field-input" id="inPass" type="password"
+          placeholder="your-hivemq-password">
+      </div>
+      <div>
+        <div class="field-label">Device ID (from Setup page on device)</div>
+        <input class="field-input" id="inDevice" type="text"
+          placeholder="e.g. A1B2C3" maxlength="12"
+          autocomplete="off" autocapitalize="none">
+      </div>
+    </div>
+    <button class="connect-btn" onclick="doConnect()">Connect to My Plant</button>
+    <div class="setup-note">
+      Credentials are saved in your browser only.<br>
+      Free HiveMQ Cloud at <a href="https://www.hivemq.com/mqtt-cloud-broker/" target="_blank">hivemq.com</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DASHBOARD ══════════════════════════════════════════════ -->
+<main class="scroll" id="dashboard" style="display:none">
+
+  <!-- Stale warning -->
+  <div class="stale-banner" id="staleBanner">
+    ⚠ Last update was over 2 minutes ago — device may be offline
+  </div>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-glow" id="hglow"></div>
+    <div class="hero-body">
+      <div class="tier-pill" id="tpill">
+        <div class="tier-dot" id="tdot"></div>
+        <span id="tlbl">Waiting...</span>
+      </div>
+      <div class="gauge-section">
+        <div class="gauge-wrap">
+          <svg class="gauge-svg" viewBox="0 0 148 148">
+            <circle class="g-track" cx="74" cy="74" r="62"/>
+            <circle class="g-glow" id="gg" cx="74" cy="74" r="62" stroke="#2DD4BF" stroke-dashoffset="390"/>
+            <circle class="g-arc"  id="ga" cx="74" cy="74" r="62" stroke="#2DD4BF" stroke-dashoffset="390"/>
+          </svg>
+          <div class="gauge-center">
+            <div class="g-val" id="gval" style="color:#2DD4BF">--</div>
+            <div class="g-unit" id="gunit">PERCENT</div>
+          </div>
+        </div>
+        <div class="hero-info">
+          <div class="hero-label" id="hlbl">Waiting for data...</div>
+          <div class="hero-desc"  id="hdesc">Connecting to your device.</div>
+          <div>
+            <div class="m-track">
+              <div class="m-fill" id="mfill" style="width:0%;background:#2DD4BF"></div>
+            </div>
+            <div class="m-labels"><span>DRY</span><span>MID</span><span>WET</span></div>
+          </div>
+          <div class="chips">
+            <div class="chip">RAW <span class="chip-v" id="cRaw">--</span></div>
+            <div class="chip">TREND <span class="chip-v" id="cTrend">--</span></div>
+            <div class="chip" id="cCal">DEFAULT</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hero-foot">
+      <span class="hft" id="lastSeen">Waiting for first message...</span>
+      <span class="hft" id="fwVer">--</span>
+    </div>
+  </section>
+
+  <!-- METRICS -->
+  <div class="metrics">
+    <div class="metric" style="--ma:#2DD4BF66">
+      <div class="metric-label">Moisture</div>
+      <div class="metric-val"><span id="mM">--</span><span class="metric-unit">%</span></div>
+      <div class="metric-sub" id="mStatus">N/A</div>
+      <div class="metric-bar"><div class="metric-barf" id="mBar" style="width:0%"></div></div>
+    </div>
+    <div class="metric" id="sigCard" style="--ma:#34D39966">
+      <div class="metric-label">WiFi Signal</div>
+      <div class="metric-val"><span id="mRssi">--</span><span class="metric-unit" id="mRssiU"></span></div>
+      <div class="metric-sub">Signal quality</div>
+      <div class="metric-bar"><div class="metric-barf" id="sigBar" style="width:0%"></div></div>
+    </div>
+    <div class="metric" id="heapCard" style="--ma:#34D39966">
+      <div class="metric-label">Free Memory</div>
+      <div class="metric-val"><span id="mHeap">--</span><span class="metric-unit">KB</span></div>
+      <div class="metric-sub">Heap available</div>
+      <div class="metric-bar"><div class="metric-barf" id="heapBar" style="width:0%"></div></div>
+    </div>
+    <div class="metric" style="--ma:#818CF866">
+      <div class="metric-label">Uptime</div>
+      <div class="metric-val"><span id="mUpH">--</span><span class="metric-unit">h</span></div>
+      <div class="metric-sub" id="mUpM">--</div>
+      <div class="metric-bar">
+        <div class="metric-barf" style="width:100%;background:#818CF8;opacity:.35"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORY CHART -->
+  <div class="chart-card">
+    <div class="cc-top">
+      <div>
+        <div class="cc-head">Moisture History</div>
+        <div class="cc-meta" id="chartMeta">24-POINT TREND</div>
+      </div>
+      <div class="cc-range" id="chartRange">Waiting...</div>
+    </div>
+    <svg class="chart-svg" id="chartSvg" viewBox="0 0 330 68" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="cgrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#2DD4BF" stop-opacity=".25" id="cgStop1"/>
+          <stop offset="80%" stop-color="#2DD4BF" stop-opacity=".02" id="cgStop2"/>
+        </linearGradient>
+      </defs>
+      <!-- reference lines -->
+      <line x1="0" y1="17" x2="330" y2="17" stroke="rgba(255,255,255,.04)" stroke-dasharray="3,5"/>
+      <line x1="0" y1="34" x2="330" y2="34" stroke="rgba(255,255,255,.04)" stroke-dasharray="3,5"/>
+      <line x1="0" y1="51" x2="330" y2="51" stroke="rgba(255,255,255,.04)" stroke-dasharray="3,5"/>
+      <text x="326" y="15" fill="rgba(255,255,255,.1)" font-size="8" font-family="DM Mono,monospace" text-anchor="end">75</text>
+      <text x="326" y="32" fill="rgba(255,255,255,.1)" font-size="8" font-family="DM Mono,monospace" text-anchor="end">50</text>
+      <text x="326" y="49" fill="rgba(255,255,255,.1)" font-size="8" font-family="DM Mono,monospace" text-anchor="end">25</text>
+      <text id="chartEmpty" x="165" y="34" text-anchor="middle"
+        fill="rgba(255,255,255,.1)" font-size="11" font-family="DM Mono,monospace"
+        letter-spacing=".5">COLLECTING DATA</text>
+      <polygon id="chartArea" fill="url(#cgrad)" points=""/>
+      <polyline id="chartLine" fill="none" stroke="#2DD4BF" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" points=""/>
+      <circle id="chartDot" cx="0" cy="0" r="4" fill="#2DD4BF" stroke="#050508" stroke-width="2"/>
+      <circle id="chartHalo" cx="0" cy="0" r="8" fill="#2DD4BF" opacity=".15"/>
+    </svg>
+    <div class="cc-footer">
+      <span class="cc-ft">OLDEST</span>
+      <span class="cc-ft" id="chartCount">0 POINTS</span>
+      <span class="cc-ft">NOW</span>
+    </div>
+  </div>
+
+  <!-- DEVICE INFO -->
+  <div class="info-card">
+    <div class="info-head">Device</div>
+    <div class="info-row"><span class="info-k">Device ID</span><span class="info-v" id="iDevID">--</span></div>
+    <div class="info-row"><span class="info-k">Sensor Name</span><span class="info-v" id="iName">--</span></div>
+    <div class="info-row"><span class="info-k">Firmware</span><span class="info-v" id="iFW">--</span></div>
+    <div class="info-row"><span class="info-k">Boot Count</span><span class="info-v" id="iBoot">--</span></div>
+    <div class="info-row"><span class="info-k">Calibration</span><span class="info-v" id="iCal">--</span></div>
+    <div class="info-row"><span class="info-k">Last Seen</span><span class="info-v" id="iTs">--</span></div>
+  </div>
+
+  <!-- RECONFIGURE -->
+  <div class="connect-card">
+    <div class="connect-card-ico">⚙️</div>
+    <div class="connect-card-t">Wrong device?</div>
+    <div class="connect-card-s">Change your broker or device ID.</div>
+    <button class="reconfigure-btn" onclick="showSetup()">Reconfigure</button>
+  </div>
+
+  <div class="footer">
+    TASNI Cloud Dashboard &nbsp;·&nbsp;
+    <a href="https://github.com/tasni-cloud/tasni-cloud.github.io" target="_blank">GitHub</a>
+    &nbsp;·&nbsp; Data via HiveMQ Cloud MQTT
+  </div>
+</main>
+
+</div><!-- root -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  TIER CONFIG
+// ═══════════════════════════════════════════════════════════════
+var T=[
+  {t:15,a:'#F87171',l:'CRITICAL', h:'Critical!',  d:'Critically dry. Water immediately.'},
+  {t:30,a:'#FB923C',l:'NEEDS WATER',h:'Needs Water',d:'Low moisture. Water your plant now.'},
+  {t:50,a:'#FBBF24',l:'THIRSTY',  h:'Thirsty',    d:'Soil is drying out. Consider watering soon.'},
+  {t:70,a:'#34D399',l:'HEALTHY',  h:'Healthy',     d:'Good moisture. Plant is in great shape.'},
+  {t:101,a:'#2DD4BF',l:'THRIVING', h:'Thriving',   d:'Moisture is excellent. Your plant is thriving.'}
+];
+function gT(m){for(var i=0;i<T.length;i++)if(m<T[i].t)return T[i];return T[4];}
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+var mqttClient = null;
+var history30  = [];          // last 30 moisture readings received
+var lastMsgTime= 0;
+var staleTimer = null;
+var STORAGE_KEY = 'tasni_cfg_v2';
+
+// ═══════════════════════════════════════════════════════════════
+//  STORAGE
+// ═══════════════════════════════════════════════════════════════
+function loadCreds(){
+  try{ return JSON.parse(localStorage.getItem(STORAGE_KEY)||'null'); }
+  catch(e){ return null; }
+}
+function saveCreds(o){ localStorage.setItem(STORAGE_KEY, JSON.stringify(o)); }
+function clearCreds(){ localStorage.removeItem(STORAGE_KEY); }
+
+// ═══════════════════════════════════════════════════════════════
+//  SPRING NUMBER ANIMATOR
+// ═══════════════════════════════════════════════════════════════
+var _sp={};
+function sTo(id,tgt){
+  var e=document.getElementById(id);if(!e)return;
+  var p=parseFloat(e._v!=null?e._v:e.textContent)||0,v=e._vel||0;
+  if(Math.abs(p-tgt)<.5){e.textContent=Math.round(tgt);e._v=tgt;e._vel=0;return;}
+  if(_sp[id])cancelAnimationFrame(_sp[id]);
+  (function tk(){
+    var f=220*(tgt-p)-26*v;v+=f*.016;p+=v*.016;
+    e._v=p;e._vel=v;e.textContent=Math.round(p);
+    if(Math.abs(tgt-p)<.3&&Math.abs(v)<.3){e.textContent=Math.round(tgt);e._v=tgt;e._vel=0;return;}
+    _sp[id]=requestAnimationFrame(tk);
+  })();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ACCENT COLOUR
+// ═══════════════════════════════════════════════════════════════
+function setAcc(c){
+  document.documentElement.style.setProperty('--acc',c);
+  var lg=document.getElementById('logo');
+  if(lg){
+    lg.style.background='linear-gradient(135deg,'+c+',color-mix(in srgb,'+c+' 60%,#10B981))';
+    lg.style.boxShadow='0 0 18px color-mix(in srgb,'+c+' 40%,transparent)';
+  }
+  // Update chart gradient stops
+  var s1=document.getElementById('cgStop1'),s2=document.getElementById('cgStop2');
+  if(s1)s1.setAttribute('stop-color',c);
+  if(s2)s2.setAttribute('stop-color',c);
+  // Update chart line + dot
+  var cl=document.getElementById('chartLine'),cd=document.getElementById('chartDot'),ch=document.getElementById('chartHalo');
+  if(cl)cl.style.stroke=c;
+  if(cd)cd.setAttribute('fill',c);
+  if(ch)ch.setAttribute('fill',c);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  APPLY MQTT PAYLOAD
+// ═══════════════════════════════════════════════════════════════
+function applyData(d){
+  lastMsgTime = Date.now();
+  resetStaleTimer();
+  setBadgeLive();
+
+  var m = parseInt(d.moisture);
+  var connected = (m >= 0);
+  var tr = connected ? gT(m) : {a:'#64748B',l:'OFFLINE',h:'Offline',d:'No sensor data received.'};
+
+  // ── Tier + accent ──────────────────────────────────────────
+  setAcc(tr.a);
+  // Hero glow
+  var hg=document.getElementById('hglow');
+  if(hg)hg.style.background='radial-gradient(circle,'+tr.a+',transparent 70%)';
+  // Tier pill
+  var tp=document.getElementById('tpill');
+  if(tp){tp.style.background=tr.a+'14';tp.style.color=tr.a;tp.style.borderColor=tr.a+'33';}
+  var td=document.getElementById('tdot');if(td)td.style.background=tr.a;
+  var tl=document.getElementById('tlbl');if(tl)tl.textContent=tr.l;
+
+  // ── Gauge ──────────────────────────────────────────────────
+  if(connected){
+    var off=Math.round(389.56*(1-m/100));
+    var ga=document.getElementById('ga');if(ga){ga.style.strokeDashoffset=off;ga.style.stroke=tr.a;}
+    var gg=document.getElementById('gg');if(gg){gg.style.strokeDashoffset=off;gg.style.stroke=tr.a;}
+    var gv=document.getElementById('gval');if(gv)gv.style.color=tr.a;
+    sTo('gval',m);
+    document.getElementById('gunit').textContent='PERCENT';
+  } else {
+    document.getElementById('gval').textContent='--';
+    document.getElementById('gval').style.color='#64748B';
+    document.getElementById('ga').style.strokeDashoffset=390;
+    document.getElementById('gg').style.strokeDashoffset=390;
+  }
+
+  // ── Hero text ──────────────────────────────────────────────
+  document.getElementById('hlbl').textContent=tr.h;
+  document.getElementById('hdesc').textContent=tr.d;
+
+  // ── Moisture bar ───────────────────────────────────────────
+  if(connected){
+    document.getElementById('mfill').style.width=m+'%';
+    document.getElementById('mfill').style.background=tr.a;
+    document.getElementById('mBar').style.width=m+'%';
+    document.getElementById('mBar').style.background=tr.a;
+    sTo('mM',m);
+    document.getElementById('mStatus').textContent=d.status||'';
+  }
+
+  // ── Chips ──────────────────────────────────────────────────
+  document.getElementById('cRaw').textContent=d.raw||'--';
+  document.getElementById('cTrend').textContent=d.trend||'--';
+  var cCal=document.getElementById('cCal');
+  if(cCal)cCal.innerHTML=d.cal=='1'?'<span class="chip-v" style="color:#34D399">CAL</span>':'DEFAULT';
+
+  // ── Signal ─────────────────────────────────────────────────
+  var rssi=parseInt(d.rssi)||0;
+  var sq=Math.min(100,Math.max(0,Math.round((rssi+90)/50*100)));
+  var sc=sq>70?'#34D399':sq>40?'#FBBF24':'#F87171';
+  document.getElementById('mRssi').textContent=d.rssi||'--';
+  document.getElementById('mRssiU').textContent=d.rssi?'dBm':'';
+  document.getElementById('sigBar').style.width=sq+'%';
+  document.getElementById('sigBar').style.background=sc;
+  document.getElementById('sigCard').style.setProperty('--ma',sc+'66');
+
+  // ── Heap ───────────────────────────────────────────────────
+  var hb=parseInt(d.heap)||0,kb=Math.round(hb/1024);
+  var hp=Math.min(100,Math.round(kb/320*100));
+  var hc=kb>150?'#34D399':kb>80?'#FBBF24':'#F87171';
+  document.getElementById('mHeap').textContent=kb;
+  document.getElementById('heapBar').style.width=hp+'%';
+  document.getElementById('heapBar').style.background=hc;
+  document.getElementById('heapCard').style.setProperty('--ma',hc+'66');
+
+  // ── Uptime ─────────────────────────────────────────────────
+  var up=parseInt(d.uptime)||0;
+  var uh=Math.floor(up/3600),um=Math.floor((up%3600)/60);
+  document.getElementById('mUpH').textContent=uh;
+  document.getElementById('mUpM').textContent=um+' min';
+
+  // ── Device info ────────────────────────────────────────────
+  document.getElementById('iDevID').textContent=d.device||'--';
+  document.getElementById('iName').textContent=d.name||'--';
+  document.getElementById('iFW').textContent=d.fw?'v'+d.fw:'--';
+  document.getElementById('iBoot').textContent=d.boot?'#'+d.boot:'--';
+  document.getElementById('iCal').textContent=d.cal=='1'?
+    'Calibrated (dry='+d.dry+' wet='+d.wet+')':'Default (dry=850 wet=400)';
+  document.getElementById('iTs').textContent=d.ts||new Date().toLocaleTimeString();
+  document.getElementById('fwVer').textContent=d.fw?'FW v'+d.fw:'--';
+
+  // ── Hero footer timestamp ──────────────────────────────────
+  document.getElementById('lastSeen').textContent=
+    'LIVE \u25CF '+new Date().toLocaleTimeString();
+
+  // ── History chart ──────────────────────────────────────────
+  if(connected){
+    history30.push(m);
+    if(history30.length>30)history30.shift();
+    drawChart(tr.a);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DRAW CHART
+// ═══════════════════════════════════════════════════════════════
+function drawChart(acc){
+  var pts=history30;
+  if(pts.length<2){
+    document.getElementById('chartEmpty').style.display='block';
+    document.getElementById('chartArea').setAttribute('points','');
+    document.getElementById('chartLine').setAttribute('points','');
+    document.getElementById('chartDot').setAttribute('cx','0');
+    document.getElementById('chartDot').setAttribute('cy','0');
+    document.getElementById('chartHalo').setAttribute('cx','0');
+    document.getElementById('chartHalo').setAttribute('cy','0');
+    document.getElementById('chartCount').textContent=pts.length+' POINTS';
+    return;
+  }
+  document.getElementById('chartEmpty').style.display='none';
+  var n=pts.length,linePts='',areaPts='';
+  var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts);
+  for(var i=0;i<n;i++){
+    var x=(i/(n-1))*330;
+    var y=68-(pts[i]/100)*64;
+    var seg=x.toFixed(1)+','+y.toFixed(1)+' ';
+    linePts+=seg;
+    if(i===0)areaPts+='0,68 ';
+    areaPts+=seg;
+  }
+  areaPts+='330,68';
+  document.getElementById('chartArea').setAttribute('points',areaPts);
+  document.getElementById('chartLine').setAttribute('points',linePts);
+  var lx=330,ly=68-(pts[n-1]/100)*64;
+  document.getElementById('chartDot').setAttribute('cx',lx.toFixed(1));
+  document.getElementById('chartDot').setAttribute('cy',ly.toFixed(1));
+  document.getElementById('chartHalo').setAttribute('cx',lx.toFixed(1));
+  document.getElementById('chartHalo').setAttribute('cy',ly.toFixed(1));
+  document.getElementById('chartRange').textContent=mn+'%\u2013'+mx+'%';
+  document.getElementById('chartCount').textContent=n+' POINTS';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CONNECTION BADGE
+// ═══════════════════════════════════════════════════════════════
+function setBadge(cls,dot,txt,anim){
+  var b=document.getElementById('connBadge');
+  var d=document.getElementById('connDot');
+  var t=document.getElementById('connTxt');
+  b.className='conn-badge '+cls;
+  d.style.background=dot;
+  d.style.animation=anim?'breathe 2.4s ease-in-out infinite':'none';
+  t.textContent=txt;
+}
+function setBadgeLive(){setBadge('badge-live','#2DD4BF','LIVE',true);}
+function setBadgeConnecting(){setBadge('badge-connecting','#FBBF24','Connecting...',true);}
+function setBadgeStale(){setBadge('badge-stale','#F87171','STALE',false);}
+function setBadgeOffline(){setBadge('badge-offline','#64748B','Offline',false);}
+
+// ═══════════════════════════════════════════════════════════════
+//  STALE DETECTION
+// ═══════════════════════════════════════════════════════════════
+function resetStaleTimer(){
+  if(staleTimer)clearTimeout(staleTimer);
+  document.getElementById('staleBanner').style.display='none';
+  staleTimer=setTimeout(function(){
+    setBadgeStale();
+    document.getElementById('staleBanner').style.display='flex';
+  },120000); // 2 minutes
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MQTT CONNECT
+// ═══════════════════════════════════════════════════════════════
+function connectMQTT(cfg){
+  if(mqttClient && mqttClient.isConnected()){
+    mqttClient.disconnect();
+  }
+  setBadgeConnecting();
+  var clientId='tasni-dash-'+Math.random().toString(36).substr(2,8);
+  mqttClient=new Paho.Client(cfg.broker,443,'/mqtt',clientId);
+
+  mqttClient.onConnectionLost=function(r){
+    console.log('MQTT lost:',r.errorMessage);
+    setBadgeOffline();
+    // Auto-reconnect after 5s
+    setTimeout(function(){
+      if(loadCreds()) connectMQTT(loadCreds());
+    },5000);
+  };
+
+  mqttClient.onMessageArrived=function(msg){
+    try{
+      var d=JSON.parse(msg.payloadString);
+      applyData(d);
+      showDashboard();
+    }catch(e){console.warn('Bad payload',e);}
+  };
+
+  var opts={
+    useSSL:true,
+    userName:cfg.username,
+    password:cfg.password,
+    keepAliveInterval:60,
+    cleanSession:true,
+    timeout:10,
+    onSuccess:function(){
+      console.log('MQTT connected');
+      var topic='tasni/'+cfg.device+'/state';
+      mqttClient.subscribe(topic,{qos:0});
+      console.log('Subscribed to',topic);
+      // Badge shows "Connecting" until first message arrives
+      toast('Connected — waiting for sensor data','ok');
+    },
+    onFailure:function(e){
+      console.error('MQTT connect failed:',e.errorMessage);
+      setBadgeOffline();
+      toast('Connection failed: '+e.errorMessage,'err');
+    }
+  };
+  try{ mqttClient.connect(opts); }
+  catch(e){ setBadgeOffline(); toast('MQTT error: '+e.message,'err'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SETUP FLOW
+// ═══════════════════════════════════════════════════════════════
+function doConnect(){
+  var broker=document.getElementById('inBroker').value.trim();
+  var user  =document.getElementById('inUser').value.trim();
+  var pass  =document.getElementById('inPass').value;
+  var device=document.getElementById('inDevice').value.trim().toUpperCase();
+  if(!broker||!user||!pass||!device){
+    toast('Please fill in all fields','err'); return;
+  }
+  var cfg={broker:broker,username:user,password:pass,device:device};
+  saveCreds(cfg);
+  connectMQTT(cfg);
+  document.getElementById('setupOverlay').style.display='none';
+  document.getElementById('dashboard').style.display='';
+}
+
+function showSetup(){
+  var cfg=loadCreds()||{};
+  if(cfg.broker)document.getElementById('inBroker').value=cfg.broker;
+  if(cfg.username)document.getElementById('inUser').value=cfg.username;
+  if(cfg.device)document.getElementById('inDevice').value=cfg.device;
+  document.getElementById('setupOverlay').style.display='flex';
+}
+
+function showDashboard(){
+  document.getElementById('setupOverlay').style.display='none';
+  document.getElementById('dashboard').style.display='';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════════════════════════
+var _tt=null;
+function toast(m,t){
+  var e=document.getElementById('toast');
+  e.textContent=m;e.className='toast on '+(t||'');
+  if(_tt)clearTimeout(_tt);
+  _tt=setTimeout(function(){e.className='toast';},2800);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  URL PARAM SUPPORT  ?device=ABC&broker=xx&user=yy&pass=zz
+//  Lets the device firmware open the exact URL with prefilled values
+// ═══════════════════════════════════════════════════════════════
+function getParam(k){
+  var m=new URLSearchParams(window.location.search).get(k);
+  return m?m.trim():null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+(function init(){
+  var pDevice=getParam('device');
+  var cfg=loadCreds();
+
+  // URL params override stored creds for device
+  if(pDevice && cfg){ cfg.device=pDevice.toUpperCase(); saveCreds(cfg); }
+
+  if(cfg && cfg.broker && cfg.username && cfg.password && cfg.device){
+    // Pre-fill setup fields in case user reopens it
+    document.getElementById('inBroker').value=cfg.broker;
+    document.getElementById('inUser').value=cfg.username;
+    document.getElementById('inDevice').value=cfg.device;
+    // Show dashboard shell immediately, connect
+    showDashboard();
+    connectMQTT(cfg);
+  } else if(pDevice){
+    // Device param provided but no stored creds — show setup prefilled
+    document.getElementById('inDevice').value=pDevice.toUpperCase();
+    document.getElementById('setupOverlay').style.display='flex';
+  } else {
+    document.getElementById('setupOverlay').style.display='flex';
+  }
+})();
+</script>
+</body>
+</html>
