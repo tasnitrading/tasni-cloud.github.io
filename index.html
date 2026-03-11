@@ -816,26 +816,45 @@ function getParam(k){
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  INIT
+//  INIT — URL params take priority (admin tool embeds everything)
 // ═══════════════════════════════════════════════════════════════
 (function init(){
-  var pDevice=getParam('device');
-  var cfg=loadCreds();
+  // Read all possible URL params (set by admin tool)
+  var pDevice = getParam('device');
+  var pBroker = getParam('broker');
+  var pUser   = getParam('user');
+  var pPass   = getParam('pass');
 
-  // URL params override stored creds for device
+  // If ALL params are in URL → connect instantly, no setup screen
+  if(pDevice && pBroker && pUser && pPass){
+    var cfg = {
+      device:   pDevice.toUpperCase(),
+      broker:   pBroker,
+      username: pUser,
+      password: pPass
+    };
+    saveCreds(cfg);
+    // Pre-fill inputs in case user opens reconfigure
+    document.getElementById('inBroker').value = pBroker;
+    document.getElementById('inUser').value   = pUser;
+    document.getElementById('inDevice').value = pDevice.toUpperCase();
+    showDashboard();
+    connectMQTT(cfg);
+    return;
+  }
+
+  // Otherwise check localStorage for saved creds
+  var cfg = loadCreds();
   if(pDevice && cfg){ cfg.device=pDevice.toUpperCase(); saveCreds(cfg); }
 
   if(cfg && cfg.broker && cfg.username && cfg.password && cfg.device){
-    // Pre-fill setup fields in case user reopens it
-    document.getElementById('inBroker').value=cfg.broker;
-    document.getElementById('inUser').value=cfg.username;
-    document.getElementById('inDevice').value=cfg.device;
-    // Show dashboard shell immediately, connect
+    document.getElementById('inBroker').value = cfg.broker;
+    document.getElementById('inUser').value   = cfg.username;
+    document.getElementById('inDevice').value = cfg.device;
     showDashboard();
     connectMQTT(cfg);
   } else if(pDevice){
-    // Device param provided but no stored creds — show setup prefilled
-    document.getElementById('inDevice').value=pDevice.toUpperCase();
+    document.getElementById('inDevice').value = pDevice.toUpperCase();
     document.getElementById('setupOverlay').style.display='flex';
   } else {
     document.getElementById('setupOverlay').style.display='flex';
